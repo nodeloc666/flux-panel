@@ -1,0 +1,72 @@
+name: Build and Release Android APK to GitHub
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'android-app/**'
+      - '.github/workflows/github-release.yml'
+
+jobs:
+  build-android:
+    if: contains(github.event.head_commit.message, '[skip android]') == false
+    name: Build & Release Android APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Check for Android changes
+        uses: dorny/paths-filter@v2
+        id: android-changes
+        with:
+          filters: |
+            android:
+              - 'android-app/**'
+
+      - name: Set up JDK
+        if: steps.android-changes.outputs.android == 'true'
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        if: steps.android-changes.outputs.android == 'true'
+        uses: android-actions/setup-android@v2
+
+      - name: Build APK
+        if: steps.android-changes.outputs.android == 'true'
+        working-directory: ./android-app
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleRelease
+
+      - name: Sign APK
+        if: steps.android-changes.outputs.android == 'true'
+        uses: r0adkll/sign-android-release@v1
+        with:
+          releaseDirectory: android-app/app/build/outputs/apk/release
+          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
+          alias: ${{ secrets.KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
+          keyPassword: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Create Release
+        if: steps.android-changes.outputs.android == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(date '+%Y%m%d-%H%M%S')
+          mv android-app/app/build/outputs/apk/release/app-release-signed.apk ./flux-panel-${VERSION}.apk
+          
+          gh release create android-v${VERSION} \
+            ./flux-panel-${VERSION}.apk \
+            --title "Android Release ${VERSION}" \
+            --notes "Automated Android release ${VERSION}
+            
+          Changes in this release:
+          - Latest commit: ${{ github.sha }}
+          - Commit message: ${{ github.event.head_commit.message }}"
